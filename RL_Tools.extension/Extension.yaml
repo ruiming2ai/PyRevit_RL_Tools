@@ -1,0 +1,6 @@
+type: extension
+name: RL_Tools
+description: Company Startup Meesage for Revit
+author: Ruiming Liu
+default_enabled: true
+rocket_mode_compatible: true
