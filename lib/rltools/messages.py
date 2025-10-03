@@ -32,8 +32,8 @@ Parameters:
 # =============================
 
 START_MESSAGE = (
-    "Please Check Your Current **[[Workset]]**.\n\n"
-    "For New Users, please read the **[[Starting View]]** (Available in only new projects) "
+    "Please Check Your Current **<<Workset>>**.\n\n"
+    "For New Users, please read the **<<Starting View>>** (Available in only new projects) "
     "for GB Standards & Best Practices."
 )
 
