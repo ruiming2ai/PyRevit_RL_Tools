@@ -816,6 +816,28 @@ class PrintSheetsWindow(forms.WPFWindow):
             return False
         return True
 
+    def _get_combined_output_filename(self):
+        fallback = 'Ordered Sheet Set.pdf'
+
+        try:
+            model_path = self.selected_doc.PathName
+        except Exception:
+            model_path = None
+
+        try:
+            model_name = op.basename(model_path) if model_path else self.selected_doc.Title
+        except Exception:
+            model_name = None
+
+        if model_name:
+            model_name = op.splitext(model_name)[0]
+            model_name = coreutils.cleanup_filename(model_name, windows_safe=True)
+
+        if not model_name:
+            return fallback
+
+        return '{}.pdf'.format(model_name)
+
     def _print_combined_sheets_in_order(self, target_sheets):
         # make sure we can access the print config
         print_mgr = self._get_printmanager()
@@ -923,7 +945,7 @@ class PrintSheetsWindow(forms.WPFWindow):
                 forms.alert(str(e) +
                             '\nSet printer correctly in Print settings.')
                 script.exit()
-            print_filepath = op.join(r'C:\\', 'Ordered Sheet Set.pdf')
+            print_filepath = op.join(r'C:\\', self._get_combined_output_filename())
             print_mgr.PrintToFile = True
             print_mgr.PrintToFileName = print_filepath
 
