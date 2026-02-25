@@ -1742,6 +1742,155 @@ def cleanup_sheetnumbers(doc):
             sheet.SheetNumber = sheet.SheetNumber.replace(NPC, '')
 
 
+def _add_unique_link_element(link_elem, link_elems, seen_ids):
+    if not link_elem:
+        return
+    try:
+        elem_id = int(get_elementid_value(link_elem.Id))
+    except Exception:
+        return
+    if elem_id in seen_ids:
+        return
+    seen_ids.add(elem_id)
+    link_elems.append(link_elem)
+
+
+def _collect_manage_links_elements(doc):
+    link_elems = []
+    seen_ids = set()
+
+    for cls_name in ('RevitLinkType', 'CADLinkType', 'PointCloudType', 'ImageType'):
+        link_cls = getattr(DB, cls_name, None)
+        if not link_cls:
+            continue
+        try:
+            elements = DB.FilteredElementCollector(doc)\
+                         .OfClass(framework.get_type(link_cls))\
+                         .WhereElementIsElementType()\
+                         .ToElements()
+        except Exception:
+            elements = []
+        for element in elements:
+            _add_unique_link_element(element, link_elems, seen_ids)
+
+    try:
+        ext_ids = DB.ExternalFileUtils.GetAllExternalFileReferences(doc)
+    except Exception:
+        ext_ids = []
+
+    for ext_id in ext_ids:
+        try:
+            element = doc.GetElement(ext_id)
+        except Exception:
+            element = None
+        _add_unique_link_element(element, link_elems, seen_ids)
+
+    return link_elems
+
+
+def _is_unloaded_link_element(doc, link_elem):
+    try:
+        if isinstance(link_elem, DB.RevitLinkType):
+            try:
+                return not DB.RevitLinkType.IsLoaded(doc, link_elem.Id)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        cad_link_type = getattr(DB, 'CADLinkType', None)
+        if cad_link_type and isinstance(link_elem, cad_link_type) \
+                and hasattr(cad_link_type, 'IsLoaded'):
+            try:
+                return not cad_link_type.IsLoaded(doc, link_elem.Id)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    ext_ref = None
+    if hasattr(DB.ExternalFileUtils, 'GetExternalFileReference'):
+        try:
+            ext_ref = DB.ExternalFileUtils.GetExternalFileReference(doc, link_elem.Id)
+        except Exception:
+            ext_ref = None
+
+    if ext_ref is None and hasattr(link_elem, 'GetExternalFileReference'):
+        try:
+            ext_ref = link_elem.GetExternalFileReference()
+        except Exception:
+            ext_ref = None
+
+    if ext_ref is not None and hasattr(ext_ref, 'GetLinkedFileStatus'):
+        try:
+            status = str(ext_ref.GetLinkedFileStatus() or '').lower()
+            if 'unloaded' in status:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def _reload_link_element(link_elem):
+    if hasattr(link_elem, 'Reload'):
+        try:
+            link_elem.Reload()
+            return True
+        except Exception as reload_err:
+            logger.warning(
+                'Failed to reload link element id %s (%s): %s',
+                get_elementid_value(link_elem.Id),
+                type(link_elem),
+                reload_err
+                )
+            return False
+    return False
+
+
+def reload_loaded_manage_links(doc):
+    if not doc:
+        return
+
+    all_links = _collect_manage_links_elements(doc)
+    logger.debug('Manage Links candidates found: %s', len(all_links))
+
+    reloaded = 0
+    skipped_unloaded = 0
+    skipped_unsupported = 0
+
+    for link_elem in all_links:
+        if _is_unloaded_link_element(doc, link_elem):
+            skipped_unloaded += 1
+            continue
+        if _reload_link_element(link_elem):
+            reloaded += 1
+        else:
+            skipped_unsupported += 1
+
+    logger.info(
+        'Reload links summary | reloaded: %s | skipped unloaded: %s | skipped unsupported/failed: %s',
+        reloaded,
+        skipped_unloaded,
+        skipped_unsupported
+        )
+
+
+def ask_and_reload_loaded_links(doc):
+    reload_message = \
+        'Reload All the loaded Links (Revit Links, Linked CAD, and others)? ' \
+        'Unloaded elements are skipped.'
+    res = WinForms.MessageBox.Show(
+        reload_message,
+        'Print Sheets',
+        WinForms.MessageBoxButtons.YesNo,
+        WinForms.MessageBoxIcon.Question
+        )
+    if res == WinForms.DialogResult.Yes:
+        reload_loaded_manage_links(doc)
+
+
 # verify model is printable
 forms.check_modeldoc(exitscript=True)
 # ensure there is nothing selected
@@ -1754,4 +1903,5 @@ if __shiftclick__:  #pylint: disable=E0602
         for open_doc in open_docs:
             cleanup_sheetnumbers(open_doc)
 else:
+    ask_and_reload_loaded_links(revit.doc)
     PrintSheetsWindow('PrintSheets.xaml').ShowDialog()
