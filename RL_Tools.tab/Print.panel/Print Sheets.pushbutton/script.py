@@ -1791,6 +1791,76 @@ def _collect_manage_links_elements(doc):
     return link_elems
 
 
+def _get_external_file_reference(doc, link_elem):
+    ext_ref = None
+    if hasattr(DB.ExternalFileUtils, 'GetExternalFileReference'):
+        try:
+            ext_ref = DB.ExternalFileUtils.GetExternalFileReference(doc, link_elem.Id)
+        except Exception:
+            ext_ref = None
+
+    if ext_ref is None and hasattr(link_elem, 'GetExternalFileReference'):
+        try:
+            ext_ref = link_elem.GetExternalFileReference()
+        except Exception:
+            ext_ref = None
+
+    return ext_ref
+
+
+def _get_linked_cad_type_ids(doc):
+    linked_type_ids = set()
+    import_inst_cls = getattr(DB, 'ImportInstance', None)
+    if not import_inst_cls:
+        return linked_type_ids
+
+    try:
+        import_instances = DB.FilteredElementCollector(doc)\
+                             .OfClass(framework.get_type(import_inst_cls))\
+                             .WhereElementIsNotElementType()\
+                             .ToElements()
+    except Exception:
+        import_instances = []
+
+    for inst in import_instances:
+        try:
+            if getattr(inst, 'IsLinked', False):
+                tid = get_elementid_value(inst.GetTypeId())
+                if tid is not None:
+                    linked_type_ids.add(int(tid))
+        except Exception:
+            continue
+    return linked_type_ids
+
+
+def _is_linked_manage_link_element(doc, link_elem, linked_cad_type_ids):
+    # Revit links are always linked objects.
+    try:
+        if isinstance(link_elem, DB.RevitLinkType):
+            return True
+    except Exception:
+        pass
+
+    # CADLinkType can represent imported CADs. Keep linked-only.
+    cad_link_type = getattr(DB, 'CADLinkType', None)
+    try:
+        if cad_link_type and isinstance(link_elem, cad_link_type):
+            try:
+                if hasattr(link_elem, 'IsLink'):
+                    return bool(link_elem.IsLink)
+            except Exception:
+                pass
+            try:
+                return int(get_elementid_value(link_elem.Id)) in linked_cad_type_ids
+            except Exception:
+                return False
+    except Exception:
+        pass
+
+    # For point clouds, images, pdf, if external reference exists, it is link-like.
+    return _get_external_file_reference(doc, link_elem) is not None
+
+
 def _is_unloaded_link_element(doc, link_elem):
     try:
         if isinstance(link_elem, DB.RevitLinkType):
@@ -1812,18 +1882,7 @@ def _is_unloaded_link_element(doc, link_elem):
     except Exception:
         pass
 
-    ext_ref = None
-    if hasattr(DB.ExternalFileUtils, 'GetExternalFileReference'):
-        try:
-            ext_ref = DB.ExternalFileUtils.GetExternalFileReference(doc, link_elem.Id)
-        except Exception:
-            ext_ref = None
-
-    if ext_ref is None and hasattr(link_elem, 'GetExternalFileReference'):
-        try:
-            ext_ref = link_elem.GetExternalFileReference()
-        except Exception:
-            ext_ref = None
+    ext_ref = _get_external_file_reference(doc, link_elem)
 
     if ext_ref is not None and hasattr(ext_ref, 'GetLinkedFileStatus'):
         try:
@@ -1862,9 +1921,14 @@ def reload_loaded_manage_links(doc):
 
     reloaded = 0
     skipped_unloaded = 0
+    skipped_imported = 0
     skipped_unsupported = 0
+    linked_cad_type_ids = _get_linked_cad_type_ids(doc)
 
     for link_elem in all_links:
+        if not _is_linked_manage_link_element(doc, link_elem, linked_cad_type_ids):
+            skipped_imported += 1
+            continue
         if _is_unloaded_link_element(doc, link_elem):
             skipped_unloaded += 1
             continue
@@ -1874,8 +1938,9 @@ def reload_loaded_manage_links(doc):
             skipped_unsupported += 1
 
     logger.info(
-        'Reload links summary | reloaded: %s | skipped unloaded: %s | skipped unsupported/failed: %s',
+        'Reload links summary | reloaded: %s | skipped imported/non-linked: %s | skipped unloaded: %s | skipped unsupported/failed: %s',
         reloaded,
+        skipped_imported,
         skipped_unloaded,
         skipped_unsupported
         )
