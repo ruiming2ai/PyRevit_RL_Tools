@@ -1724,6 +1724,9 @@ class PrintSheetsWindow(forms.WPFWindow):
                                        'not be cancelled.'.format(message),
                                        ok=False, yes=True, no=True):
                         return
+
+            ask_and_reload_loaded_links(revit.doc)
+
             # close window and submit print
             self.Close()
             if self.combine_print:
@@ -1833,10 +1836,11 @@ def _is_unloaded_link_element(doc, link_elem):
     return False
 
 
-def _reload_link_element(link_elem):
+def _reload_link_element(doc, link_elem):
     if hasattr(link_elem, 'Reload'):
         try:
-            link_elem.Reload()
+            with revit.Transaction('Reload Manage Link', doc=doc):
+                link_elem.Reload()
             return True
         except Exception as reload_err:
             logger.warning(
@@ -1864,7 +1868,7 @@ def reload_loaded_manage_links(doc):
         if _is_unloaded_link_element(doc, link_elem):
             skipped_unloaded += 1
             continue
-        if _reload_link_element(link_elem):
+        if _reload_link_element(doc, link_elem):
             reloaded += 1
         else:
             skipped_unsupported += 1
@@ -1903,5 +1907,4 @@ if __shiftclick__:  #pylint: disable=E0602
         for open_doc in open_docs:
             cleanup_sheetnumbers(open_doc)
 else:
-    ask_and_reload_loaded_links(revit.doc)
     PrintSheetsWindow('PrintSheets.xaml').ShowDialog()
