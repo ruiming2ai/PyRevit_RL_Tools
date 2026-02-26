@@ -2,9 +2,9 @@
 __doc__ = """Creates many RVT, DWG or IFC links at once.
 """
 
-__title__ = 'Link more'
+__title__ = 'Batch Links'
 
-__helpurl__ = "https://apex-project.github.io/pyApex/help#link-more"
+
 
 import clr
 import System
