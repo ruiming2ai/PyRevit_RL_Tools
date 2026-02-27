@@ -16,6 +16,7 @@ logger = script.get_logger()
 get_elementid_value = get_elementid_value_func()
 ALL_TOKEN = "<All>"
 TEXT_STORAGE_TOKEN = "string"
+TEXT_KEYWORDS = ("text", "multiline", "multi-line")
 
 
 def _eid_int(element_id):
@@ -225,6 +226,16 @@ def _source_has_value(source_param):
         return True
 
 
+def _is_text_like_target(target_desc):
+    storage_text = _safe_text(target_desc.storage_type).lower()
+    if TEXT_STORAGE_TOKEN in storage_text:
+        return True
+
+    data_label = _safe_text(target_desc.data_label).lower()
+    data_key = _safe_text(target_desc.data_key).lower()
+    return any(k in data_label or k in data_key for k in TEXT_KEYWORDS)
+
+
 class ParamDescriptor(object):
     def __init__(
         self,
@@ -403,8 +414,8 @@ def _are_compatible(source_desc, target_desc):
     if source_desc.is_instance != target_desc.is_instance:
         return False
 
-    # Exception: text targets are always allowed.
-    if TEXT_STORAGE_TOKEN in _safe_text(target_desc.storage_type).lower():
+    # Exception: text and multi-line text targets are always allowed.
+    if _is_text_like_target(target_desc):
         return True
 
     return (
