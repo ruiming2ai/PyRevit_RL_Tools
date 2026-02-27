@@ -168,7 +168,7 @@
                 </Grid.RowDefinitions>
 
                 <TextBlock Grid.Row="0"
-                           Text="Description: Copy selected source parameter values to selected target parameters. Standard rule: source and target must match instance/type + data type + storage. Exception: Text and Multi-line Text target parameters are allowed and source values are converted to text."
+                           Text="Description: Copy selected source parameter values to selected target parameters. Standard rule: source and target must match instance/type + data type + storage. Exceptions: (1) Text and Multi-line Text targets are allowed with source converted to text. (2) Numeric-to-numeric targets are allowed across different data types using the number shown in Properties and target display units. Non-convertable source formats are skipped with warning."
                            FontSize="16"
                            TextWrapping="Wrap"/>
 

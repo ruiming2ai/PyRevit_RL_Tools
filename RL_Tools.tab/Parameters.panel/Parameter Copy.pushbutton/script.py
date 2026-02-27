@@ -3,6 +3,7 @@
 
 # pylint: disable=import-error,invalid-name,broad-except,too-many-instance-attributes
 from collections import defaultdict
+import re
 
 from pyrevit import DB
 from pyrevit import forms
@@ -17,6 +18,7 @@ get_elementid_value = get_elementid_value_func()
 ALL_TOKEN = "<All>"
 TEXT_STORAGE_TOKEN = "string"
 TEXT_KEYWORDS = ("text", "multiline", "multi-line")
+NUMERIC_TOKEN_RE = re.compile(r"[-+]?(?:\d+(?:[.,]\d+)?|\d*[.,]\d+)(?:[eE][-+]?\d+)?")
 
 
 def _eid_int(element_id):
@@ -142,32 +144,38 @@ def _get_param_by_descriptor(element, desc):
     return None
 
 
-def _copy_param_value(source_param, target_param):
+def _copy_param_value(source_param, target_param, source_desc=None, target_desc=None):
     source_storage = source_param.StorageType
     target_storage = target_param.StorageType
 
     # Text targets are exception targets and always receive source-as-text.
     if target_storage == DB.StorageType.String:
         target_param.Set(_source_value_as_text(source_param))
-        return True
+        return True, None
+
+    if _should_coerce_numeric_between_types(source_desc, target_desc):
+        source_number, warning = _extract_source_display_number(source_param)
+        if warning:
+            return False, warning
+        return _set_numeric_target_value(target_param, source_number)
 
     if source_storage != target_storage:
-        return False
+        return False, None
 
     if source_storage == DB.StorageType.String:
         target_param.Set(source_param.AsString() or "")
-        return True
+        return True, None
     if source_storage == DB.StorageType.Integer:
         target_param.Set(source_param.AsInteger())
-        return True
+        return True, None
     if source_storage == DB.StorageType.Double:
         target_param.Set(source_param.AsDouble())
-        return True
+        return True, None
     if source_storage == DB.StorageType.ElementId:
         target_param.Set(source_param.AsElementId())
-        return True
+        return True, None
 
-    return False
+    return False, None
 
 
 def _source_value_as_text(source_param):
@@ -226,6 +234,18 @@ def _source_has_value(source_param):
         return True
 
 
+def _is_boolean_like_descriptor(desc):
+    blob = "{} {}".format(_safe_text(desc.data_label), _safe_text(desc.data_key)).lower()
+    return "yes/no" in blob or "boolean" in blob or "bool" in blob
+
+
+def _is_numeric_descriptor(desc):
+    if _is_boolean_like_descriptor(desc):
+        return False
+    storage_text = _safe_text(desc.storage_type).lower()
+    return "double" in storage_text or "integer" in storage_text or "int" in storage_text
+
+
 def _is_text_like_target(target_desc):
     storage_text = _safe_text(target_desc.storage_type).lower()
     if TEXT_STORAGE_TOKEN in storage_text:
@@ -234,6 +254,158 @@ def _is_text_like_target(target_desc):
     data_label = _safe_text(target_desc.data_label).lower()
     data_key = _safe_text(target_desc.data_key).lower()
     return any(k in data_label or k in data_key for k in TEXT_KEYWORDS)
+
+
+def _should_coerce_numeric_between_types(source_desc, target_desc):
+    if not source_desc or not target_desc:
+        return False
+    if not (_is_numeric_descriptor(source_desc) and _is_numeric_descriptor(target_desc)):
+        return False
+    # Normal same-datatype numeric copy should keep original internal value logic.
+    return source_desc.data_key != target_desc.data_key
+
+
+def _parse_number_token(token):
+    token = _safe_text(token).strip()
+    if not token:
+        return None
+
+    number_styles = (
+        System.Globalization.NumberStyles.Float
+        | System.Globalization.NumberStyles.AllowThousands
+    )
+    parse_cultures = (
+        System.Globalization.CultureInfo.CurrentCulture,
+        System.Globalization.CultureInfo.InvariantCulture,
+    )
+    for culture in parse_cultures:
+        try:
+            return float(System.Double.Parse(token, number_styles, culture))
+        except Exception:
+            continue
+
+    # Fallback for ambiguous separators
+    normalized = token.replace(" ", "")
+    if normalized.count(",") > 1 and "." not in normalized:
+        normalized = normalized.replace(",", "")
+    elif normalized.count(".") > 1 and "," not in normalized:
+        normalized = normalized.replace(".", "")
+    else:
+        normalized = normalized.replace(",", ".")
+    try:
+        return float(normalized)
+    except Exception:
+        return None
+
+
+def _get_param_unit_id(param):
+    definition = getattr(param, "Definition", None)
+
+    # Newer API path (ForgeTypeId)
+    try:
+        spec_id = definition.GetDataType() if definition else None
+        spec_type_id = _safe_text(getattr(spec_id, "TypeId", "")) if spec_id else ""
+        if spec_type_id:
+            format_options = revit.doc.GetUnits().GetFormatOptions(spec_id)
+            if format_options:
+                unit_id = format_options.GetUnitTypeId()
+                if _safe_text(getattr(unit_id, "TypeId", "")):
+                    return unit_id
+    except Exception:
+        pass
+
+    # Older API fallback (DisplayUnitType)
+    try:
+        display_unit = param.DisplayUnitType
+        if "undefined" not in _safe_text(display_unit).lower():
+            return display_unit
+    except Exception:
+        pass
+
+    return None
+
+
+def _convert_internal_to_display(param, internal_value):
+    unit_id = _get_param_unit_id(param)
+    if unit_id is None:
+        return float(internal_value)
+    try:
+        return float(DB.UnitUtils.ConvertFromInternalUnits(float(internal_value), unit_id))
+    except Exception:
+        return float(internal_value)
+
+
+def _convert_display_to_internal(param, display_value):
+    unit_id = _get_param_unit_id(param)
+    if unit_id is None:
+        return float(display_value)
+    try:
+        return float(DB.UnitUtils.ConvertToInternalUnits(float(display_value), unit_id))
+    except Exception:
+        return float(display_value)
+
+
+def _extract_source_display_number(source_param):
+    source_storage = source_param.StorageType
+
+    if source_storage == DB.StorageType.Integer:
+        try:
+            return float(source_param.AsInteger()), None
+        except Exception:
+            return None, "Could not read integer source value."
+
+    if source_storage != DB.StorageType.Double:
+        return None, "Source is not a numeric parameter."
+
+    source_value_string = _safe_text(source_param.AsValueString()).strip()
+    if source_value_string:
+        source_value_lower = source_value_string.lower()
+        if "'" in source_value_string or "\"" in source_value_string:
+            return None, (
+                "Non-convertable source format '{}'. "
+                "Use decimal numeric display format before cross-type copy."
+            ).format(source_value_string)
+        if " ft" in source_value_lower or " in" in source_value_lower:
+            return None, (
+                "Non-convertable source format '{}'. "
+                "Use decimal numeric display format before cross-type copy."
+            ).format(source_value_string)
+
+        number_tokens = NUMERIC_TOKEN_RE.findall(source_value_string)
+        if len(number_tokens) == 1:
+            parsed_number = _parse_number_token(number_tokens[0])
+            if parsed_number is not None:
+                return parsed_number, None
+            return None, "Could not parse source number '{}'.".format(source_value_string)
+        if len(number_tokens) > 1:
+            return None, (
+                "Non-convertable source format '{}'. "
+                "Only a single numeric token can be converted across data types."
+            ).format(source_value_string)
+
+    try:
+        source_internal = source_param.AsDouble()
+        return _convert_internal_to_display(source_param, source_internal), None
+    except Exception:
+        return None, "Could not read source numeric value."
+
+
+def _set_numeric_target_value(target_param, source_display_number):
+    target_storage = target_param.StorageType
+    if target_storage == DB.StorageType.Integer:
+        try:
+            target_param.Set(int(round(source_display_number)))
+            return True, None
+        except Exception as ex:
+            return False, "Failed writing integer target value: {}".format(ex)
+    if target_storage == DB.StorageType.Double:
+        try:
+            target_internal = _convert_display_to_internal(target_param, source_display_number)
+            target_param.Set(target_internal)
+            return True, None
+        except Exception as ex:
+            return False, "Failed writing numeric target value: {}".format(ex)
+    return False, "Target is not numeric."
 
 
 class ParamDescriptor(object):
@@ -416,6 +588,10 @@ def _are_compatible(source_desc, target_desc):
 
     # Exception: text and multi-line text targets are always allowed.
     if _is_text_like_target(target_desc):
+        return True
+
+    # Exception: numeric parameters can copy across different data types.
+    if _is_numeric_descriptor(source_desc) and _is_numeric_descriptor(target_desc):
         return True
 
     return (
@@ -710,8 +886,20 @@ class ParameterCopyWindow(forms.WPFWindow):
                         continue
 
                     try:
-                        if _copy_param_value(source_param, target_param):
+                        did_write, warning_msg = _copy_param_value(
+                            source_param,
+                            target_param,
+                            source_desc=source_desc,
+                            target_desc=target_desc,
+                        )
+                        if did_write:
                             stats["writes"] += 1
+                        elif warning_msg:
+                            stats["warnings"] += 1
+                            if elem_id_int is not None:
+                                sample_ids["warnings"].add(elem_id_int)
+                            if len(error_rows) < 30:
+                                error_rows.append("id {} -> WARNING: {}".format(elem_id_int, warning_msg))
                         else:
                             stats["unsupported_storage"] += 1
                             if elem_id_int is not None:
@@ -733,6 +921,7 @@ class ParameterCopyWindow(forms.WPFWindow):
             "Empty source: {}".format(stats["empty_source"]),
             "Missing target: {}".format(stats["missing_target"]),
             "Read-only target: {}".format(stats["readonly_target"]),
+            "Warnings (skipped): {}".format(stats["warnings"]),
             "Unsupported storage: {}".format(stats["unsupported_storage"]),
             "Errors: {}".format(stats["errors"]),
         ]
@@ -748,6 +937,7 @@ class ParameterCopyWindow(forms.WPFWindow):
         append_sample("empty_source", "Empty source")
         append_sample("missing_target", "Missing target")
         append_sample("readonly_target", "Read-only target")
+        append_sample("warnings", "Warnings")
         append_sample("unsupported_storage", "Unsupported storage")
         append_sample("errors", "Errors")
 
