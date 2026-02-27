@@ -15,6 +15,7 @@ from pyrevit.framework import System
 logger = script.get_logger()
 get_elementid_value = get_elementid_value_func()
 ALL_TOKEN = "<All>"
+TEXT_STORAGE_TOKEN = "string"
 
 
 def _eid_int(element_id):
@@ -141,22 +142,78 @@ def _get_param_by_descriptor(element, desc):
 
 
 def _copy_param_value(source_param, target_param):
-    storage = source_param.StorageType
+    source_storage = source_param.StorageType
+    target_storage = target_param.StorageType
 
-    if storage == DB.StorageType.String:
+    # Text targets are exception targets and always receive source-as-text.
+    if target_storage == DB.StorageType.String:
+        target_param.Set(_source_value_as_text(source_param))
+        return True
+
+    if source_storage != target_storage:
+        return False
+
+    if source_storage == DB.StorageType.String:
         target_param.Set(source_param.AsString() or "")
         return True
-    if storage == DB.StorageType.Integer:
+    if source_storage == DB.StorageType.Integer:
         target_param.Set(source_param.AsInteger())
         return True
-    if storage == DB.StorageType.Double:
+    if source_storage == DB.StorageType.Double:
         target_param.Set(source_param.AsDouble())
         return True
-    if storage == DB.StorageType.ElementId:
+    if source_storage == DB.StorageType.ElementId:
         target_param.Set(source_param.AsElementId())
         return True
 
     return False
+
+
+def _source_value_as_text(source_param):
+    try:
+        storage = source_param.StorageType
+    except Exception:
+        return ""
+
+    if storage == DB.StorageType.String:
+        return source_param.AsString() or ""
+
+    # Prefer the Revit display string when available.
+    try:
+        value_string = source_param.AsValueString()
+        if value_string:
+            return _safe_text(value_string)
+    except Exception:
+        pass
+
+    if storage == DB.StorageType.Integer:
+        try:
+            return str(source_param.AsInteger())
+        except Exception:
+            return ""
+
+    if storage == DB.StorageType.Double:
+        try:
+            return str(source_param.AsDouble())
+        except Exception:
+            return ""
+
+    if storage == DB.StorageType.ElementId:
+        try:
+            ref_id = source_param.AsElementId()
+            ref_id_int = _eid_int(ref_id)
+            if ref_id_int in (None, -1):
+                return ""
+            ref_elem = revit.doc.GetElement(ref_id)
+            if ref_elem:
+                ref_name = _safe_text(getattr(ref_elem, "Name", ""))
+                if ref_name:
+                    return ref_name
+            return str(ref_id_int)
+        except Exception:
+            return ""
+
+    return ""
 
 
 def _source_has_value(source_param):
@@ -343,9 +400,15 @@ def _collect_parameter_catalog(instance_elements, type_elements):
 
 
 def _are_compatible(source_desc, target_desc):
+    if source_desc.is_instance != target_desc.is_instance:
+        return False
+
+    # Exception: text targets are always allowed.
+    if TEXT_STORAGE_TOKEN in _safe_text(target_desc.storage_type).lower():
+        return True
+
     return (
-        source_desc.is_instance == target_desc.is_instance
-        and source_desc.storage_type == target_desc.storage_type
+        source_desc.storage_type == target_desc.storage_type
         and source_desc.data_key == target_desc.data_key
     )
 
