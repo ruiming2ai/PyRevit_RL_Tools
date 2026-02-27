@@ -443,7 +443,6 @@ class ParameterCombineWindow(forms.WPFWindow):
     def __init__(self, xaml_file_name):
         forms.WPFWindow.__init__(self, xaml_file_name)
         self.is_ready = False
-        self._auto_format_once = False
 
         self.instance_elements, self.type_elements, scope_note = _collect_scope_elements()
         if not (self.instance_elements or self.type_elements):
@@ -479,7 +478,9 @@ class ParameterCombineWindow(forms.WPFWindow):
         self._bind_filter_options()
         self._refresh_source_list()
         self._refresh_target_list()
-        self.token_help_tb.Text = "Select source parameters to see available placeholder tokens."
+        self.token_help_tb.Text = (
+            "Select source parameters, then click 'Add Parameters ↓' to insert tokens."
+        )
         self.is_ready = True
 
     def _bind_filter_options(self):
@@ -620,7 +621,9 @@ class ParameterCombineWindow(forms.WPFWindow):
     def _update_token_help(self):
         selected_sources = self._get_selected_sources()
         if not selected_sources:
-            self.token_help_tb.Text = "Select source parameters to see available placeholder tokens."
+            self.token_help_tb.Text = (
+                "Select source parameters, then click 'Add Parameters ↓' to insert tokens."
+            )
             return
 
         token_info = _build_source_token_info(selected_sources)
@@ -629,11 +632,10 @@ class ParameterCombineWindow(forms.WPFWindow):
             available_tokens.append("{" + item["primary"] + "}")
             available_tokens.append("{P" + str(item["index"]) + "}")
         available_tokens = sorted(set(available_tokens))
-        self.token_help_tb.Text = "Available tokens: " + ", ".join(available_tokens[:30])
-
-        if not self._auto_format_once and not _safe_text(self.combine_format_tb.Text).strip():
-            self.combine_format_tb.Text = " - ".join("{" + x["primary"] + "}" for x in token_info)
-            self._auto_format_once = True
+        self.token_help_tb.Text = (
+            "Available tokens: {}. Click 'Add Parameters ↓' to append selected tokens."
+            .format(", ".join(available_tokens[:30]))
+        )
 
     def source_filter_changed(self, sender, args):
         self._refresh_source_list()
@@ -652,7 +654,7 @@ class ParameterCombineWindow(forms.WPFWindow):
             len(selected_sources), ", ".join(kinds)
         )
 
-    def use_selected_tokens(self, sender, args):
+    def add_selected_to_format(self, sender, args):
         selected_sources = self._get_selected_sources()
         if not selected_sources:
             forms.alert(
@@ -660,8 +662,18 @@ class ParameterCombineWindow(forms.WPFWindow):
                 title="Parameter Combine",
             )
             return
+
         token_info = _build_source_token_info(selected_sources)
-        self.combine_format_tb.Text = " - ".join("{" + x["primary"] + "}" for x in token_info)
+        token_text = " ".join("{" + x["primary"] + "}" for x in token_info)
+        current_text = _safe_text(self.combine_format_tb.Text)
+
+        if current_text:
+            joiner = "" if current_text.endswith((" ", "\t", "\n")) else " "
+            self.combine_format_tb.Text = current_text + joiner + token_text
+        else:
+            self.combine_format_tb.Text = token_text
+
+        self.status_tb.Text = "Added {} token(s) to format.".format(len(token_info))
 
     def cancel_click(self, sender, args):
         self.Close()
