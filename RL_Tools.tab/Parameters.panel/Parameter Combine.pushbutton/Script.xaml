@@ -1,4 +1,4 @@
-﻿<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Parameter Combine"
         Height="860"
@@ -182,18 +182,18 @@
                     </StackPanel>
                 </Button>
 
-                <TextBox x:Name="combine_format_tb"
-                         Grid.Row="2"
-                         Width="560"
-                         Height="38"
-                         Margin="0,8,0,0"
-                         HorizontalAlignment="Center"
-                         VerticalContentAlignment="Center"
-                         Padding="8,2,8,2"/>
+                <RichTextBox x:Name="combine_format_rtb"
+                             Grid.Row="2"
+                             Width="760"
+                             Height="72"
+                             Margin="0,8,0,0"
+                             HorizontalAlignment="Center"
+                             VerticalScrollBarVisibility="Auto"
+                             PreviewKeyDown="combine_format_preview_keydown"/>
 
                 <StackPanel Grid.Row="3" Margin="0,8,0,0" HorizontalAlignment="Center">
                     <TextBlock Text="Example:" FontSize="14" FontWeight="SemiBold"/>
-                    <TextBlock Text="xx: {Parameter A} - {Parameter B} + {P3} xxx"
+                    <TextBlock Text="xx: [Parameter A] - [Parameter B] + [Parameter C] xxx"
                                FontSize="14"
                                Foreground="DimGray"/>
                 </StackPanel>

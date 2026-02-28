@@ -3,7 +3,8 @@
 
 # pylint: disable=import-error,invalid-name,broad-except,too-many-instance-attributes
 from collections import defaultdict
-import re
+
+import clr
 
 from pyrevit import DB
 from pyrevit import forms
@@ -12,13 +13,29 @@ from pyrevit import script
 from pyrevit.compat import get_elementid_value_func
 from pyrevit.framework import System
 
+clr.AddReference("PresentationFramework")
+clr.AddReference("PresentationCore")
+clr.AddReference("WindowsBase")
+
+from System.Windows import Thickness
+from System.Windows.Controls import Border, TextBlock
+from System.Windows.Documents import (
+    FlowDocument,
+    InlineUIContainer,
+    Paragraph,
+    Run,
+    TextRange,
+)
+from System.Windows.Input import Cursors, Key
+from System.Windows.Media import Brushes
+
 
 logger = script.get_logger()
 get_elementid_value = get_elementid_value_func()
 ALL_TOKEN = "<All>"
 TEXT_STORAGE_TOKEN = "string"
 TEXT_KEYWORDS = ("text", "multiline", "multi-line")
-TOKEN_PATTERN = re.compile(r"\{([^{}]+)\}")
+CHIP_TAG_PREFIX = "PC_CHIP::"
 
 
 def _eid_int(element_id):
@@ -379,64 +396,15 @@ def _collect_parameter_catalog(instance_elements, type_elements):
     return sorted(catalog.values(), key=lambda x: x.sort_key)
 
 
-def _build_source_token_info(source_descs):
-    name_count = defaultdict(int)
-    for src in source_descs:
-        name_count[src.name] += 1
-
-    token_info = []
-    for idx, src in enumerate(source_descs, 1):
-        aliases = []
-        if src.name:
-            aliases.append(src.name)
-            aliases.append("{}#{}".format(src.name, idx))
-        aliases.append("P{}".format(idx))
-        aliases.append(str(idx))
-
-        # De-duplicate aliases while preserving order.
-        unique_aliases = []
-        seen = set()
-        for token in aliases:
-            key = token.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            unique_aliases.append(token)
-
-        primary = src.name if name_count[src.name] == 1 and src.name else "P{}".format(idx)
-        token_info.append(
-            {
-                "index": idx,
-                "desc": src,
-                "primary": primary,
-                "aliases": unique_aliases,
-            }
-        )
-
-    return token_info
-
-
-def _extract_template_tokens(template_text):
-    if template_text is None:
-        return []
-    escaped = _safe_text(template_text).replace("{{", "\uFFF0").replace("}}", "\uFFF1")
-    return [m.group(1).strip() for m in TOKEN_PATTERN.finditer(escaped)]
-
-
-def _render_template(template_text, token_values):
-    escaped = _safe_text(template_text).replace("{{", "\uFFF0").replace("}}", "\uFFF1")
-    missing = []
-
-    def replace_token(match):
-        key = match.group(1).strip()
-        if key in token_values:
-            return _safe_text(token_values[key])
-        missing.append(key)
-        return ""
-
-    rendered = TOKEN_PATTERN.sub(replace_token, escaped)
-    rendered = rendered.replace("\uFFF0", "{").replace("\uFFF1", "}")
-    return rendered, missing
+def _dedupe_preserve_order(values):
+    seen = set()
+    output = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        output.append(value)
+    return output
 
 
 class ParameterCombineWindow(forms.WPFWindow):
@@ -469,6 +437,11 @@ class ParameterCombineWindow(forms.WPFWindow):
             )
             return
 
+        self.source_desc_by_key = {x.key: x for x in self.source_descriptors}
+        self._chip_counter = 0
+        self._chip_registry = {}
+        self._selected_chip_id = None
+
         self.scope_tb.Text = scope_note
         self.status_tb.Text = "Loaded {} source / {} text-target parameters".format(
             len(self.source_descriptors),
@@ -478,10 +451,17 @@ class ParameterCombineWindow(forms.WPFWindow):
         self._bind_filter_options()
         self._refresh_source_list()
         self._refresh_target_list()
-        self.token_help_tb.Text = (
-            "Select source parameters, then click 'Add Parameters ↓' to insert tokens."
-        )
+        self._ensure_format_document()
+        self._update_token_help()
         self.is_ready = True
+
+    def _ensure_format_document(self):
+        if not getattr(self.combine_format_rtb, "Document", None):
+            doc = FlowDocument()
+            doc.Blocks.Add(Paragraph())
+            self.combine_format_rtb.Document = doc
+        elif self.combine_format_rtb.Document.Blocks.Count == 0:
+            self.combine_format_rtb.Document.Blocks.Add(Paragraph())
 
     def _bind_filter_options(self):
         source_ptypes = [ALL_TOKEN] + sorted({x.origin for x in self.source_descriptors})
@@ -619,23 +599,189 @@ class ParameterCombineWindow(forms.WPFWindow):
             return []
 
     def _update_token_help(self):
+        self._prune_chip_registry()
         selected_sources = self._get_selected_sources()
+        chip_count = len(self._chip_registry)
         if not selected_sources:
             self.token_help_tb.Text = (
-                "Select source parameters, then click 'Add Parameters ↓' to insert tokens."
+                "Select source parameters and click 'Add Parameters' to insert boxed tokens at cursor. "
+                "Use Delete/Backspace to remove selected or adjacent tokens. "
+                "Current tokens: {}.".format(chip_count)
             )
             return
 
-        token_info = _build_source_token_info(selected_sources)
-        available_tokens = []
-        for item in token_info:
-            available_tokens.append("{" + item["primary"] + "}")
-            available_tokens.append("{P" + str(item["index"]) + "}")
-        available_tokens = sorted(set(available_tokens))
+        previews = ["[{}]".format(x.name) for x in selected_sources[:8]]
+        if len(selected_sources) > 8:
+            previews.append("...")
         self.token_help_tb.Text = (
-            "Available tokens: {}. Click 'Add Parameters ↓' to append selected tokens."
-            .format(", ".join(available_tokens[:30]))
+            "Ready to add: {}. Click 'Add Parameters' to insert at cursor. "
+            "Current tokens: {}.".format(", ".join(previews), chip_count)
         )
+
+    def _make_chip_id(self):
+        self._chip_counter += 1
+        return "{}{}".format(CHIP_TAG_PREFIX, self._chip_counter)
+
+    def _create_chip_border(self, desc, chip_id):
+        border = Border()
+        border.BorderBrush = Brushes.SteelBlue
+        border.BorderThickness = Thickness(1)
+        border.Background = Brushes.AliceBlue
+        border.Padding = Thickness(4, 1, 4, 1)
+        border.Margin = Thickness(1, 0, 1, 0)
+        border.Tag = chip_id
+        border.Focusable = False
+        border.Cursor = Cursors.Hand
+
+        textblock = TextBlock()
+        textblock.Text = "[{}]".format(desc.name)
+        textblock.FontSize = 12
+        border.Child = textblock
+        border.MouseLeftButtonDown += self._chip_mouse_left_down
+        return border
+
+    def _set_selected_chip(self, chip_id):
+        self._selected_chip_id = chip_id if chip_id in self._chip_registry else None
+        for current_id, chip_data in self._chip_registry.items():
+            border = chip_data.get("border")
+            if not border:
+                continue
+            if current_id == self._selected_chip_id:
+                border.Background = Brushes.LightYellow
+                border.BorderBrush = Brushes.DarkGreen
+            else:
+                border.Background = Brushes.AliceBlue
+                border.BorderBrush = Brushes.SteelBlue
+
+    def _chip_mouse_left_down(self, sender, args):
+        chip_id = _safe_text(getattr(sender, "Tag", ""))
+        if chip_id in self._chip_registry:
+            self._set_selected_chip(chip_id)
+            self.combine_format_rtb.Focus()
+            self.status_tb.Text = "Selected token '{}'. Press Delete/Backspace to remove.".format(
+                self._chip_registry[chip_id]["name"]
+            )
+        try:
+            args.Handled = True
+        except Exception:
+            pass
+
+    def _prune_chip_registry(self):
+        removed_selected = False
+        for chip_id in list(self._chip_registry.keys()):
+            chip_data = self._chip_registry.get(chip_id)
+            inline = chip_data.get("inline") if chip_data else None
+            parent = None
+            if inline:
+                try:
+                    parent = inline.Parent
+                except Exception:
+                    parent = None
+            if not parent:
+                self._chip_registry.pop(chip_id, None)
+                if chip_id == self._selected_chip_id:
+                    removed_selected = True
+
+        if removed_selected:
+            self._selected_chip_id = None
+
+    def _insert_chip_at_pointer(self, desc, pointer):
+        chip_id = self._make_chip_id()
+        border = self._create_chip_border(desc, chip_id)
+        inline = InlineUIContainer(border, pointer)
+        self._chip_registry[chip_id] = {
+            "desc_key": desc.key,
+            "name": desc.name,
+            "is_instance": desc.is_instance,
+            "inline": inline,
+            "border": border,
+        }
+        self._set_selected_chip(chip_id)
+        return inline
+
+    def _remove_chip(self, chip_id):
+        chip_data = self._chip_registry.get(chip_id)
+        if not chip_data:
+            return False
+
+        inline = chip_data.get("inline")
+        parent = None
+        if inline:
+            try:
+                parent = inline.Parent
+            except Exception:
+                parent = None
+
+        if parent and hasattr(parent, "Inlines"):
+            try:
+                parent.Inlines.Remove(inline)
+            except Exception:
+                pass
+
+        self._chip_registry.pop(chip_id, None)
+        self._set_selected_chip(None)
+        self._update_token_help()
+        return True
+
+    def _find_adjacent_chip_id(self, key_value):
+        self._prune_chip_registry()
+        caret = self.combine_format_rtb.CaretPosition
+        if not caret:
+            return None
+
+        for chip_id, chip_data in self._chip_registry.items():
+            inline = chip_data.get("inline")
+            if not inline:
+                continue
+            try:
+                if key_value == Key.Back and caret.CompareTo(inline.ContentEnd) == 0:
+                    return chip_id
+                if key_value == Key.Delete and caret.CompareTo(inline.ContentStart) == 0:
+                    return chip_id
+            except Exception:
+                continue
+        return None
+
+    def _get_format_segments(self):
+        self._prune_chip_registry()
+        self._ensure_format_document()
+        segments = []
+        token_desc_keys = []
+
+        blocks = []
+        for block in self.combine_format_rtb.Document.Blocks:
+            blocks.append(block)
+
+        for block_index, block in enumerate(blocks):
+            if isinstance(block, Paragraph):
+                inline = block.Inlines.FirstInline
+                while inline:
+                    if isinstance(inline, Run):
+                        text_value = _safe_text(inline.Text)
+                        if text_value:
+                            segments.append(("text", text_value))
+                    elif isinstance(inline, InlineUIContainer):
+                        child = getattr(inline, "Child", None)
+                        chip_id = _safe_text(getattr(child, "Tag", ""))
+                        chip_data = self._chip_registry.get(chip_id)
+                        if chip_data:
+                            desc_key = chip_data["desc_key"]
+                            segments.append(("token", desc_key))
+                            token_desc_keys.append(desc_key)
+                    inline = inline.NextInline
+            else:
+                try:
+                    block_text = _safe_text(TextRange(block.ContentStart, block.ContentEnd).Text)
+                    block_text = block_text.replace("\r", "")
+                    if block_text:
+                        segments.append(("text", block_text))
+                except Exception:
+                    pass
+
+            if block_index < len(blocks) - 1:
+                segments.append(("text", "\n"))
+
+        return segments, token_desc_keys
 
     def source_filter_changed(self, sender, args):
         self._refresh_source_list()
@@ -655,6 +801,7 @@ class ParameterCombineWindow(forms.WPFWindow):
         )
 
     def add_selected_to_format(self, sender, args):
+        self._ensure_format_document()
         selected_sources = self._get_selected_sources()
         if not selected_sources:
             forms.alert(
@@ -663,30 +810,39 @@ class ParameterCombineWindow(forms.WPFWindow):
             )
             return
 
-        token_info = _build_source_token_info(selected_sources)
-        token_text = " ".join("{" + x["primary"] + "}" for x in token_info)
-        current_text = _safe_text(self.combine_format_tb.Text)
+        caret = self.combine_format_rtb.CaretPosition or self.combine_format_rtb.Document.ContentEnd
+        for index, desc in enumerate(selected_sources):
+            inline = self._insert_chip_at_pointer(desc, caret)
+            caret = inline.ElementEnd
+            if index < len(selected_sources) - 1:
+                spacer = Run(" ", caret)
+                caret = spacer.ElementEnd
 
-        if current_text:
-            joiner = "" if current_text.endswith((" ", "\t", "\n")) else " "
-            self.combine_format_tb.Text = current_text + joiner + token_text
-        else:
-            self.combine_format_tb.Text = token_text
+        self.combine_format_rtb.CaretPosition = caret
+        self.combine_format_rtb.Focus()
+        self._update_token_help()
+        self.status_tb.Text = "Added {} token(s) at cursor position.".format(len(selected_sources))
 
-        self.status_tb.Text = "Added {} token(s) to format.".format(len(token_info))
+    def combine_format_preview_keydown(self, sender, args):
+        key_value = args.Key
+        if key_value not in (Key.Back, Key.Delete):
+            return
+
+        chip_id = self._selected_chip_id
+        if not chip_id:
+            chip_id = self._find_adjacent_chip_id(key_value)
+
+        if chip_id and self._remove_chip(chip_id):
+            self.status_tb.Text = "Removed token. You can add it again anytime."
+            try:
+                args.Handled = True
+            except Exception:
+                pass
 
     def cancel_click(self, sender, args):
         self.Close()
 
     def run_click(self, sender, args):
-        source_descs = self._get_selected_sources()
-        if not source_descs:
-            forms.alert(
-                "Please select one or more source parameters.",
-                title="Parameter Combine",
-            )
-            return
-
         target_descs = self._get_selected_targets()
         if not target_descs:
             forms.alert(
@@ -695,28 +851,46 @@ class ParameterCombineWindow(forms.WPFWindow):
             )
             return
 
-        format_text = _safe_text(self.combine_format_tb.Text).strip()
-        if not format_text:
+        segments, token_desc_keys = self._get_format_segments()
+        if not token_desc_keys:
             forms.alert(
-                "Please enter a combined parameter value format.",
+                "At least one parameter token is required in Combined Parameter Values Format.",
                 title="Parameter Combine",
             )
             return
 
-        source_kinds = set(x.is_instance for x in source_descs)
-        if len(source_kinds) != 1:
+        unique_token_keys = _dedupe_preserve_order(token_desc_keys)
+        resolved_source_descs = [
+            self.source_desc_by_key[x]
+            for x in unique_token_keys
+            if x in self.source_desc_by_key
+        ]
+        if not resolved_source_descs:
             forms.alert(
-                "Selected source parameters mix Type and Instance.\nPlease select only one kind.",
+                "No valid parameter tokens found in the format.\nPlease add source parameters again.",
                 title="Parameter Combine",
             )
+            return
+
+        source_kinds = set(x.is_instance for x in resolved_source_descs)
+        if len(source_kinds) != 1:
+            lines = [
+                "Mixed Instance/Type parameter tokens are not allowed in one format.",
+                "Token parameters:",
+            ]
+            for item in resolved_source_descs[:20]:
+                lines.append(" - {} [{}]".format(item.name, item.kind_label))
+            forms.alert("\n".join(lines), title="Parameter Combine")
             return
         source_is_instance = list(source_kinds)[0]
 
         invalid_targets = []
+        invalid_target_keys = set()
         for tdesc in target_descs:
-            if not _is_text_like_target(tdesc):
-                invalid_targets.append(tdesc)
-            if tdesc.is_instance != source_is_instance:
+            if (not _is_text_like_target(tdesc)) or (tdesc.is_instance != source_is_instance):
+                if tdesc.key in invalid_target_keys:
+                    continue
+                invalid_target_keys.add(tdesc.key)
                 invalid_targets.append(tdesc)
         if invalid_targets:
             lines = [
@@ -726,22 +900,6 @@ class ParameterCombineWindow(forms.WPFWindow):
             for item in invalid_targets[:20]:
                 lines.append(" - {}".format(item.display))
             forms.alert("\n".join(lines), title="Parameter Combine")
-            return
-
-        token_info = _build_source_token_info(source_descs)
-        available_token_keys = set()
-        for item in token_info:
-            for alias in item["aliases"]:
-                available_token_keys.add(alias)
-
-        template_tokens = _extract_template_tokens(format_text)
-        missing_tokens = sorted(set(x for x in template_tokens if x not in available_token_keys))
-        if missing_tokens:
-            forms.alert(
-                "Unknown tokens in format:\n - {}\n\nUse placeholders from the available token list."
-                .format("\n - ".join(missing_tokens[:30])),
-                title="Parameter Combine",
-            )
             return
 
         processing_elements = self.instance_elements if source_is_instance else self.type_elements
@@ -755,15 +913,35 @@ class ParameterCombineWindow(forms.WPFWindow):
         stats = defaultdict(int)
         sample_ids = defaultdict(set)
         detail_rows = []
+        token_desc_lookup = {key: self.source_desc_by_key.get(key) for key in unique_token_keys}
+        unresolved_token_keys = [key for key, desc in token_desc_lookup.items() if not desc]
+        if unresolved_token_keys:
+            detail_rows.append(
+                "WARNING: unresolved token key(s): {}".format(
+                    ", ".join(unresolved_token_keys[:20])
+                )
+            )
 
         with revit.Transaction("Parameter Combine"):
             for elem in processing_elements:
                 elem_id_int = _eid_int(elem.Id)
                 stats["elements_processed"] += 1
 
-                token_values = {}
-                for info in token_info:
-                    src_param = _get_param_by_descriptor(elem, info["desc"])
+                combined_parts = []
+                for seg_type, seg_value in segments:
+                    if seg_type == "text":
+                        combined_parts.append(seg_value)
+                        continue
+
+                    source_desc = token_desc_lookup.get(seg_value)
+                    if not source_desc:
+                        stats["missing_source"] += 1
+                        if elem_id_int is not None:
+                            sample_ids["missing_source"].add(elem_id_int)
+                        combined_parts.append("")
+                        continue
+
+                    src_param = _get_param_by_descriptor(elem, source_desc)
                     if not src_param:
                         stats["missing_source"] += 1
                         if elem_id_int is not None:
@@ -777,22 +955,9 @@ class ParameterCombineWindow(forms.WPFWindow):
                     else:
                         src_text = _param_value_as_text(src_param)
 
-                    for alias in info["aliases"]:
-                        token_values[alias] = src_text
+                    combined_parts.append(src_text)
 
-                combined_text, missing_runtime = _render_template(format_text, token_values)
-                if missing_runtime:
-                    stats["warnings"] += 1
-                    if elem_id_int is not None:
-                        sample_ids["warnings"].add(elem_id_int)
-                    if len(detail_rows) < 30:
-                        detail_rows.append(
-                            "id {} -> WARNING: unresolved token(s): {}".format(
-                                elem_id_int,
-                                ", ".join(sorted(set(missing_runtime))),
-                            )
-                        )
-                    continue
+                combined_text = "".join(combined_parts)
 
                 for target_desc in target_descs:
                     target_param = _get_param_by_descriptor(elem, target_desc)
@@ -829,7 +994,7 @@ class ParameterCombineWindow(forms.WPFWindow):
 
         summary = [
             "Parameter Combine completed.",
-            "Sources: {}".format(len(source_descs)),
+            "Source tokens in format: {}".format(len(unique_token_keys)),
             "Targets: {}".format(len(target_descs)),
             "Elements processed: {}".format(stats["elements_processed"]),
             "Values written: {}".format(stats["writes"]),
@@ -862,6 +1027,7 @@ class ParameterCombineWindow(forms.WPFWindow):
 
         summary_text = "\n".join(summary)
         self.status_tb.Text = "Done. Wrote {} value(s).".format(stats["writes"])
+        self._update_token_help()
         forms.alert(summary_text, title="Parameter Combine", warn_icon=False)
 
 
