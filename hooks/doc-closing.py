@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""RL Tools close-stop document closing hook."""
-
-from rltools import close_stop
+"""Clear RL Tools per-document startup records during document close."""
 
 try:
     from rltools import coordination_review_passive
@@ -24,5 +22,3 @@ if coordination_review_passive is not None:
         coordination_review_passive.clear_document_records(doc)
     except Exception:
         pass
-
-close_stop.handle_doc_closing(event_args=_EVENT_ARGS)
