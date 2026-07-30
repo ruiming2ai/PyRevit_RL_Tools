@@ -4,7 +4,7 @@ import unittest
 
 
 MODULE_PATH = (
-    pathlib.Path(__file__).resolve().parents[1]
+    pathlib.Path(__file__).resolve().parents[2]
     / "RL_Tools.tab"
     / "Misc Tools.panel"
     / "Batch Duplicate Host.pushbutton"

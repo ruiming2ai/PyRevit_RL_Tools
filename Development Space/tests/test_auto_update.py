@@ -5,7 +5,7 @@ from unittest import mock
 
 
 MODULE_PATH = (
-    pathlib.Path(__file__).resolve().parents[1]
+    pathlib.Path(__file__).resolve().parents[2]
     / "lib"
     / "rltools"
     / "auto_update.py"
