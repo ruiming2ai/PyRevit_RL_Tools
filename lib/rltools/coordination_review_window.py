@@ -27,13 +27,7 @@ DEFAULT_STATUS_TEXT = (
 )
 
 
-def _safe_text(value):
-    if value is None:
-        return ""
-    try:
-        return str(value)
-    except Exception:
-        return ""
+from rltools.compat import safe_text as _safe_text
 
 
 def _safe_int(value):
