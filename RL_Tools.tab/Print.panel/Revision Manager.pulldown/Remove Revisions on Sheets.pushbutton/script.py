@@ -45,21 +45,14 @@ if doc is None:
     raise SystemExit
 
 
-def eid_int(eid):
-    if eid is None:
-        return None
-    try:
-        return int(eid.IntegerValue)
-    except Exception:
-        pass
-    try:
-        return int(eid.Value)
-    except Exception:
-        pass
-    try:
-        return int(str(eid))
-    except Exception:
-        return None
+from rltools.compat import eid_to_int as eid_int
+from rltools.compat import element_id_factory
+
+# Resolve the Int32-vs-Int64 ElementId constructor once at module scope.
+# Revit 2026 removed the Int32 overload, and these scripts build ids
+# inside loops - a per-construction try/except would throw and catch on
+# every iteration there.
+eid_from_int = element_id_factory(ElementId)
 
 
 def format_ids(ids):
@@ -617,19 +610,19 @@ try:
             if has_set_additional and has_get_additional:
                 new_list = ClrList[ElementId]()
                 for rid in after_ints:
-                    new_list.Add(ElementId(int(rid)))
+                    new_list.Add(eid_from_int(rid))
                 try:
                     sheet.SetAdditionalRevisionIds(new_list)
                 except Exception:
                     for rid in (before_set - set(after_ints)):
                         try:
-                            sheet.RemoveRevision(ElementId(int(rid)))
+                            sheet.RemoveRevision(eid_from_int(rid))
                         except Exception:
                             pass
             else:
                 for rid in (before_set - set(after_ints)):
                     try:
-                        sheet.RemoveRevision(ElementId(int(rid)))
+                        sheet.RemoveRevision(eid_from_int(rid))
                     except Exception:
                         pass
 

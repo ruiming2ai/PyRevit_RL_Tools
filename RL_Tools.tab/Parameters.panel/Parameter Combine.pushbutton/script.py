@@ -47,6 +47,7 @@ def _eid_int(element_id):
         return None
 
 
+from rltools.compat import int_to_eid
 from rltools.compat import safe_text as _safe_text
 
 
@@ -134,7 +135,7 @@ def _get_param_by_descriptor(element, desc):
             bip = System.Enum.ToObject(DB.BuiltInParameter, desc.param_id_int)
             param = element.get_Parameter(bip)
         else:
-            param = element.get_Parameter(DB.ElementId(desc.param_id_int))
+            param = element.get_Parameter(int_to_eid(desc.param_id_int, DB.ElementId))
     except Exception:
         param = None
 

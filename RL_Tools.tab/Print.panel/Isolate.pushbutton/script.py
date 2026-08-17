@@ -32,21 +32,14 @@ if doc is None:
     raise SystemExit
 
 
-def eid_int(eid):
-    if eid is None:
-        return None
-    try:
-        return int(eid.IntegerValue)
-    except Exception:
-        pass
-    try:
-        return int(eid.Value)
-    except Exception:
-        pass
-    try:
-        return int(str(eid))
-    except Exception:
-        return None
+from rltools.compat import eid_to_int as eid_int
+from rltools.compat import element_id_factory
+
+# Resolve the Int32-vs-Int64 ElementId constructor once at module scope.
+# Revit 2026 removed the Int32 overload, and these scripts build ids
+# inside loops - a per-construction try/except would throw and catch on
+# every iteration there.
+eid_from_int = element_id_factory(ElementId)
 
 
 def format_ids(values):
@@ -264,7 +257,7 @@ try:
         views_processed += 1
 
         for cid_int in hide_ids:
-            cid = ElementId(int(cid_int))
+            cid = eid_from_int(cid_int)
             try:
                 can_hide = True
                 if hasattr(view, "CanCategoryBeHidden"):
