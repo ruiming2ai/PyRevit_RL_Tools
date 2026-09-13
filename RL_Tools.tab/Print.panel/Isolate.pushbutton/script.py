@@ -32,21 +32,14 @@ if doc is None:
     raise SystemExit
 
 
-def eid_int(eid):
-    if eid is None:
-        return None
-    try:
-        return int(eid.IntegerValue)
-    except Exception:
-        pass
-    try:
-        return int(eid.Value)
-    except Exception:
-        pass
-    try:
-        return int(str(eid))
-    except Exception:
-        return None
+from rltools.compat import eid_to_int as eid_int
+from rltools.compat import element_id_factory
+
+# Resolve the Int32-vs-Int64 ElementId constructor once at module scope.
+# Revit 2026 removed the Int32 overload, and these scripts build ids
+# inside loops - a per-construction try/except would throw and catch on
+# every iteration there.
+eid_from_int = element_id_factory(ElementId)
 
 
 def format_ids(values):
@@ -256,18 +249,22 @@ hide_ops = 0
 cannot_hide_ids = set()
 failed_ops = []
 
+# The same category ids are applied to every view; build the ElementIds once
+# instead of views x categories times inside the transaction.
+hide_eids = [(cid_int, eid_from_int(cid_int)) for cid_int in hide_ids]
+
 transaction = Transaction(doc, "Isolate Categories in All Views and Sheets")
 transaction.Start()
 try:
     for view in views:
         view_changed = False
         views_processed += 1
+        can_hide_supported = hasattr(view, "CanCategoryBeHidden")
 
-        for cid_int in hide_ids:
-            cid = ElementId(int(cid_int))
+        for cid_int, cid in hide_eids:
             try:
                 can_hide = True
-                if hasattr(view, "CanCategoryBeHidden"):
+                if can_hide_supported:
                     try:
                         can_hide = view.CanCategoryBeHidden(cid)
                     except Exception:

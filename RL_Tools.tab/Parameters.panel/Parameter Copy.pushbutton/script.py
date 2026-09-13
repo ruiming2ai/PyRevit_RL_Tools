@@ -30,13 +30,8 @@ def _eid_int(element_id):
         return None
 
 
-def _safe_text(value):
-    if value is None:
-        return ""
-    try:
-        return str(value)
-    except Exception:
-        return ""
+from rltools.compat import int_to_eid
+from rltools.compat import safe_text as _safe_text
 
 
 def _origin_from_parameter(param, pid_int):
@@ -126,7 +121,7 @@ def _get_param_by_descriptor(element, desc):
             bip = System.Enum.ToObject(DB.BuiltInParameter, desc.param_id_int)
             param = element.get_Parameter(bip)
         else:
-            param = element.get_Parameter(DB.ElementId(desc.param_id_int))
+            param = element.get_Parameter(int_to_eid(desc.param_id_int, DB.ElementId))
     except Exception:
         param = None
 
@@ -548,16 +543,20 @@ def _collect_parameter_catalog(instance_elements, type_elements):
                 if param_id_int is None:
                     continue
 
-                storage_type = _safe_text(param.StorageType)
-                data_key, data_label, discipline_label = _data_type_from_parameter(param)
-                origin = _origin_from_parameter(param, param_id_int)
+                # Dedupe before the descriptor derivations: the catalog
+                # converges within the first few elements, so nearly every
+                # later parameter takes this early exit and the four interop
+                # round-trips below would be thrown away.
                 descriptor_key = "{}|{}".format("I" if is_instance else "T", param_id_int)
-
                 if descriptor_key in catalog:
                     desc = catalog[descriptor_key]
                     if not param.IsReadOnly:
                         desc.has_writable = True
                     continue
+
+                storage_type = _safe_text(param.StorageType)
+                data_key, data_label, discipline_label = _data_type_from_parameter(param)
+                origin = _origin_from_parameter(param, param_id_int)
 
                 desc = ParamDescriptor(
                     param_id_int=param_id_int,

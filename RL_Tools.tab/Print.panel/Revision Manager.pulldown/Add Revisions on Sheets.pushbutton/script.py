@@ -44,21 +44,14 @@ if doc is None:
     raise SystemExit
 
 
-def eid_int(eid):
-    if eid is None:
-        return None
-    try:
-        return int(eid.IntegerValue)
-    except Exception:
-        pass
-    try:
-        return int(eid.Value)
-    except Exception:
-        pass
-    try:
-        return int(str(eid))
-    except Exception:
-        return None
+from rltools.compat import eid_to_int as eid_int
+from rltools.compat import element_id_factory
+
+# Resolve the Int32-vs-Int64 ElementId constructor once at module scope.
+# Revit 2026 removed the Int32 overload, and these scripts build ids
+# inside loops - a per-construction try/except would throw and catch on
+# every iteration there.
+eid_from_int = element_id_factory(ElementId)
 
 
 def doc_key():
@@ -527,7 +520,7 @@ rev_ids_ints, rev_numbers = pick_revisions()
 if rev_ids_ints is None:
     raise SystemExit
 
-selected_rev_eids = [ElementId(int(x)) for x in rev_ids_ints]
+selected_rev_eids = [eid_from_int(x) for x in rev_ids_ints]
 chosen_sheets = pick_sheets()
 if chosen_sheets is None:
     raise SystemExit

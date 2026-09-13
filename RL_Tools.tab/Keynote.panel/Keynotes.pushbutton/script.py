@@ -32,6 +32,9 @@ output = script.get_output()
 
 HELP_URL = "https://www.notion.so/pyrevitlabs/Manage-Keynotes-6f083d6f66fe43d68dc5d5407c8e19da"
 
+# Revit 2026 removed ElementId.IntegerValue; eid_to_int falls back to Value.
+from rltools.compat import eid_to_int as _eid_value
+
 
 def get_keynote_pcommands():
     return list(reversed(
@@ -534,14 +537,14 @@ class KeynoteManagerWindow(forms.WPFWindow):
             return
 
         selected_keys = set()
-        keynote_tag_catid = DB.ElementId(
-            DB.BuiltInCategory.OST_KeynoteTags
-            ).IntegerValue
+        keynote_tag_catid = _eid_value(
+            DB.ElementId(DB.BuiltInCategory.OST_KeynoteTags)
+            )
         for element_id in selected_ids:
             element = revit.doc.GetElement(element_id)
             if not element or not element.Category:
                 continue
-            if element.Category.Id.IntegerValue != keynote_tag_catid:
+            if _eid_value(element.Category.Id) != keynote_tag_catid:
                 continue
 
             key_param = element.Parameter[DB.BuiltInParameter.KEY_VALUE]

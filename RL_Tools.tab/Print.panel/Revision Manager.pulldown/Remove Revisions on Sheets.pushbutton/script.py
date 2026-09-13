@@ -45,21 +45,14 @@ if doc is None:
     raise SystemExit
 
 
-def eid_int(eid):
-    if eid is None:
-        return None
-    try:
-        return int(eid.IntegerValue)
-    except Exception:
-        pass
-    try:
-        return int(eid.Value)
-    except Exception:
-        pass
-    try:
-        return int(str(eid))
-    except Exception:
-        return None
+from rltools.compat import eid_to_int as eid_int
+from rltools.compat import element_id_factory
+
+# Resolve the Int32-vs-Int64 ElementId constructor once at module scope.
+# Revit 2026 removed the Int32 overload, and these scripts build ids
+# inside loops - a per-construction try/except would throw and catch on
+# every iteration there.
+eid_from_int = element_id_factory(ElementId)
 
 
 def format_ids(ids):
@@ -192,6 +185,14 @@ def hide_clouds_in_all_views(cloud_element_ids, revision_ids_int, cloud_ids_int)
     if not cloud_element_ids:
         return result
 
+    # The same cloud elements are checked in every view; resolve them from
+    # the document once instead of views x clouds times.
+    resolved_clouds = []
+    for cloud_id in cloud_element_ids:
+        cloud = doc.GetElement(cloud_id)
+        if cloud is not None:
+            resolved_clouds.append((cloud_id, cloud))
+
     transaction = Transaction(doc, "Auto Hide Revision Clouds for Leftovers")
     transaction.Start()
     try:
@@ -201,10 +202,7 @@ def hide_clouds_in_all_views(cloud_element_ids, revision_ids_int, cloud_ids_int)
                     continue
 
                 to_hide = []
-                for cloud_id in cloud_element_ids:
-                    cloud = doc.GetElement(cloud_id)
-                    if cloud is None:
-                        continue
+                for cloud_id, cloud in resolved_clouds:
                     try:
                         if cloud.CanBeHidden(view) and (not cloud.IsHidden(view)):
                             to_hide.append(cloud_id)
@@ -617,19 +615,19 @@ try:
             if has_set_additional and has_get_additional:
                 new_list = ClrList[ElementId]()
                 for rid in after_ints:
-                    new_list.Add(ElementId(int(rid)))
+                    new_list.Add(eid_from_int(rid))
                 try:
                     sheet.SetAdditionalRevisionIds(new_list)
                 except Exception:
                     for rid in (before_set - set(after_ints)):
                         try:
-                            sheet.RemoveRevision(ElementId(int(rid)))
+                            sheet.RemoveRevision(eid_from_int(rid))
                         except Exception:
                             pass
             else:
                 for rid in (before_set - set(after_ints)):
                     try:
-                        sheet.RemoveRevision(ElementId(int(rid)))
+                        sheet.RemoveRevision(eid_from_int(rid))
                     except Exception:
                         pass
 

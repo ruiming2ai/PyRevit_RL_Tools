@@ -27,13 +27,8 @@ DEFAULT_STATUS_TEXT = (
 )
 
 
-def _safe_text(value):
-    if value is None:
-        return ""
-    try:
-        return str(value)
-    except Exception:
-        return ""
+from rltools.compat import int_to_eid
+from rltools.compat import safe_text as _safe_text
 
 
 def _safe_int(value):
@@ -314,7 +309,7 @@ class CoordinationReviewWindow(forms.WPFWindow):
             return
 
         try:
-            element_id = DB.ElementId(int(element_id_int))
+            element_id = int_to_eid(element_id_int, DB.ElementId)
             element = self.doc.GetElement(element_id)
         except Exception:
             element = None

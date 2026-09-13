@@ -12,13 +12,7 @@ from batch_duplicate_host_state import sort_family_groups
 TITLE = "Batch Duplicate Host"
 
 
-def _safe_text(value):
-    if value is None:
-        return ""
-    try:
-        return str(value)
-    except Exception:
-        return ""
+from rltools.compat import safe_text as _safe_text
 
 
 class SourceSelectionWindow(forms.WPFWindow):
