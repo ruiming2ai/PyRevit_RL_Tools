@@ -1,4 +1,4 @@
-name: Temporary encrypted MSI artifact
+name: Temporary Revit MSI transfer artifact
 
 on:
   push:
@@ -14,25 +14,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download encrypted MSI
+      - name: Download Windows-validated MSI from protected preview
         shell: bash
         run: |
           set -euo pipefail
-          url="https://tmpfiles.org/dl/w2AfwxwWqPBi/revitagentsexporter-2025-1.5.1-setup.msi.aes"
-          out="$RUNNER_TEMP/RevitAgentsExporter-2025-1.5.1-Setup.msi.aes"
-          curl -fL --retry 3 --retry-delay 2 "$url" -o "$out"
+          url="https://bim-spatial-lab-demo-76bqe8id5-ruiming2ais-projects.vercel.app/RevitAgentsExporter-2025-1.5.1-Setup.msi?_vercel_share=Jbldz0xL1hfZEyiWM3ZCS66yVUZNvXsO"
+          out="$RUNNER_TEMP/RevitAgentsExporter-2025-1.5.1-Setup.msi"
+          cookies="$RUNNER_TEMP/vercel-cookies.txt"
+          curl -fL --retry 3 --retry-delay 2 -c "$cookies" -b "$cookies" "$url" -o "$out"
           actual=$(sha256sum "$out" | awk '{print $1}')
-          expected="b95dfafc0bc43c027deb920d89027b3f41c5cfbeeebe05bac01ea9d110ac8470"
+          expected="b9069832c5de6811131b7dadc2a3baa47e875479375adce3edb5af704ceedfa5"
           test "$actual" = "$expected" || {
-            echo "Encrypted MSI hash mismatch: $actual" >&2
+            echo "MSI hash mismatch: $actual" >&2
+            file "$out" || true
+            wc -c "$out" || true
             exit 1
           }
-          echo "ENC_PATH=$out" >> "$GITHUB_ENV"
-          echo "Verified encrypted payload: $actual"
-      - name: Upload encrypted artifact
+          echo "MSI_PATH=$out" >> "$GITHUB_ENV"
+          echo "Verified MSI: $actual"
+      - name: Upload MSI transfer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RevitAgents-1.5.1-encrypted-transfer
-          path: ${{ env.ENC_PATH }}
+          name: RevitAgents-1.5.1-msi-transfer
+          path: ${{ env.MSI_PATH }}
           retention-days: 1
           if-no-files-found: error
