@@ -1,0 +1,161 @@
+name: Temporary Revit Agents 1.5.3 Windows build
+
+on:
+  push:
+    branches:
+      - temp-revit153-windows-build-20260928
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_ZIP_SHA256: "5dc012b4d17cfe4353a1c4cdf80355131d2e545fd83fea8d8a4a0dccdf1cc90e"
+  SOURCE_URL: "https://sdmntprnorthcentralus.oaiusercontent.com/files/00000000-3070-822f-8c3e-0c9d044756dd/raw?se=2026-09-28T22%3A57%3A50Z&sp=r&sv=2026-02-06&sr=b&scid=e64cf2bf-56de-5d30-bbe2-4dfe3c44a15d&skoid=3c9b86d7-60cb-496a-a3c1-90c5457c8da4&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-28T20%3A40%3A54Z&ske=2026-09-29T20%3A40%3A54Z&sks=b&skv=2026-02-06&sig=iGdDQaoMgaexVbLy/4D20ooLeK06I8P9oCOzbwcY2fY%3D"
+  REVIT_API_SHA256: "8EE1B8BA387AABE1DAF5D364C4A3F74A9396C7D50186E8197594B8E1E0462920"
+  REVIT_APIUI_SHA256: "B46C4CACBE6344283AD057CBF24CB61F8A7443194C3AC87872103EF6E2DA99C1"
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download and verify source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $zip=Join-Path $env:RUNNER_TEMP "src.zip"
+          Invoke-WebRequest -UseBasicParsing -Uri $env:SOURCE_URL -OutFile $zip
+          $actual=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -ne $env:SOURCE_ZIP_SHA256.ToLowerInvariant()){throw "Source hash mismatch $actual"}
+          $root=Join-Path $env:RUNNER_TEMP "source"
+          Expand-Archive $zip $root -Force
+          if(!(Test-Path (Join-Path $root "exporter\scripts\build.ps1"))){throw "Bad source layout"}
+          "SOURCE_ROOT=$root" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Verify Revit 2025 API
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $pkg=Join-Path $env:RUNNER_TEMP "revit-api.nupkg"
+          $zip=Join-Path $env:RUNNER_TEMP "revit-api.zip"
+          $expanded=Join-Path $env:RUNNER_TEMP "revit-api-package"
+          $apiDir=Join-Path $env:RUNNER_TEMP "revit-api"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://api.nuget.org/v3-flatcontainer/revit_all_main_versions_api_x64/2025.0.0/revit_all_main_versions_api_x64.2025.0.0.nupkg" -OutFile $pkg
+          Copy-Item $pkg $zip
+          Expand-Archive $zip $expanded -Force
+          New-Item -ItemType Directory $apiDir -Force | Out-Null
+          $expected=@{"RevitAPI.dll"=$env:REVIT_API_SHA256;"RevitAPIUI.dll"=$env:REVIT_APIUI_SHA256}
+          foreach($name in $expected.Keys){
+            $match=Get-ChildItem $expanded -Recurse -File -Filter $name | Where-Object {(Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expected[$name]} | Select-Object -First 1
+            if(!$match){throw "Missing pinned $name"}
+            $sig=Get-AuthenticodeSignature $match.FullName
+            if($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "Autodesk, Inc"){throw "Signature failure $name"}
+            Copy-Item $match.FullName (Join-Path $apiDir $name)
+          }
+          "REVIT_API_DIR=$apiDir" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install WiX 5.0.2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $toolDir=Join-Path $env:RUNNER_TEMP "wix-tool"
+          dotnet tool install --tool-path $toolDir wix --version 5.0.2
+          $wixExe=Join-Path $toolDir "wix.exe"
+          & $wixExe extension add -g WixToolset.Util.wixext/5.0.2
+          & $wixExe extension add -g WixToolset.UI.wixext/5.0.2
+          $roots=@($toolDir,(Join-Path $env:USERPROFILE ".wix"),(Join-Path $env:USERPROFILE ".nuget\packages"))
+          $wixDll=Get-ChildItem $roots -Recurse -File -Filter "wix.dll" -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "[\\/]5\.0\.2[\\/]"} | Select-Object -First 1
+          $util=Get-ChildItem $roots -Recurse -File -Filter "WixToolset.Util.wixext.dll" -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "[\\/]5\.0\.2[\\/]"} | Select-Object -First 1
+          $ui=Get-ChildItem $roots -Recurse -File -Filter "WixToolset.UI.wixext.dll" -ErrorAction SilentlyContinue | Where-Object {$_.FullName -match "[\\/]5\.0\.2[\\/]"} | Select-Object -First 1
+          if(!$wixDll -or !$util -or !$ui){throw "WiX assemblies not found"}
+          "WIX_EXE=$wixExe" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "WIX_DLL=$($wixDll.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "WIX_UTIL=$($util.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "WIX_UI=$($ui.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: JS tests and viewer build
+        shell: pwsh
+        run: |
+          node --test (Join-Path $env:SOURCE_ROOT "live-viewer\tests\core.test.mjs")
+          if($LASTEXITCODE -ne 0){throw "JS tests failed"}
+          node (Join-Path $env:SOURCE_ROOT "live-viewer\build.mjs")
+          if($LASTEXITCODE -ne 0){throw "Viewer build failed"}
+
+      - name: ViewerHost tests
+        shell: pwsh
+        run: |
+          dotnet run --project (Join-Path $env:SOURCE_ROOT "exporter\HostTests") -c Release -p:UseSharedCompilation=false
+          if($LASTEXITCODE -ne 0){throw "ViewerHost tests failed"}
+
+      - name: Native scheduler tests
+        shell: pwsh
+        run: |
+          dotnet run --project (Join-Path $env:SOURCE_ROOT "exporter\NativeLiveTests") -c Release -p:UseSharedCompilation=false
+          if($LASTEXITCODE -ne 0){throw "Native scheduler tests failed"}
+
+      - name: Build Revit add-in
+        shell: pwsh
+        run: |
+          $revision=(Get-FileHash (Join-Path $env:SOURCE_ROOT "exporter\Revit2025\LiveSession.cs") -Algorithm SHA1).Hash.ToLowerInvariant()
+          & (Join-Path $env:SOURCE_ROOT "exporter\scripts\build.ps1") -RevitApiDir $env:REVIT_API_DIR -DotnetExe (Get-Command dotnet).Source -SourceRevision $revision
+
+      - name: Publish ViewerHost
+        shell: pwsh
+        run: |
+          $exporter=Join-Path $env:SOURCE_ROOT "exporter"
+          $published=Join-Path $exporter "artifacts\ViewerHost"
+          $revision=(Get-FileHash (Join-Path $env:SOURCE_ROOT "exporter\Revit2025\LiveSession.cs") -Algorithm SHA1).Hash.ToLowerInvariant()
+          dotnet publish (Join-Path $exporter "ViewerHost\RevitAgents.ViewerHost.csproj") -c Release -r win-x64 --self-contained true -p:UseSharedCompilation=false -p:DebugType=None -p:DebugSymbols=false "-p:SourceRevisionId=$revision" -o $published
+          if($LASTEXITCODE -ne 0){throw "ViewerHost publish failed"}
+          Copy-Item (Join-Path $env:SOURCE_ROOT "THIRD-PARTY-LOCAL-VIEWER.txt") $published
+          Copy-Item (Join-Path $env:SOURCE_ROOT "licenses-local-viewer") $published -Recurse
+          $files=@(Get-ChildItem $published -Recurse -File | Sort-Object FullName | ForEach-Object {
+            if($_.Name -match "^RevitAPI(UI)?\.dll$"){throw "Autodesk API redistribution forbidden"}
+            @{path=$_.FullName.Substring($published.Length+1).Replace("\","/");sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+          })
+          @{schemaVersion=1;files=$files} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $published "helper-build-receipt.json") -Encoding UTF8
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $release=Join-Path $env:RUNNER_TEMP "release"
+          New-Item -ItemType Directory $release -Force | Out-Null
+          & (Join-Path $env:SOURCE_ROOT "installer\build-installer.ps1") -WixDll $env:WIX_DLL -UtilExtension $env:WIX_UTIL -UiExtension $env:WIX_UI -DotnetExe (Get-Command dotnet).Source -ProductVersion "1.5.3" -OutputDir $release
+          $raw=Join-Path $release "RevitAgentsExporter-2025-Setup.msi"
+          $msi=Join-Path $release "RevitAgentsExporter-2025-1.5.3-Setup.msi"
+          Move-Item $raw $msi -Force
+          $hash=(Get-FileHash $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  RevitAgentsExporter-2025-1.5.3-Setup.msi" | Set-Content (Join-Path $release "SHA256SUMS.txt") -Encoding ascii
+          Copy-Item (Join-Path $env:SOURCE_ROOT "PATCH-1.5.3.md") $release
+          "RELEASE_DIR=$release" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "MSI_PATH=$msi" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Validate MSI
+        shell: pwsh
+        run: |
+          $installer=New-Object -ComObject WindowsInstaller.Installer
+          $db=$installer.OpenDatabase($env:MSI_PATH,0)
+          function P([string]$n){$v=$db.OpenView("SELECT Value FROM Property WHERE Property='$n'");$v.Execute();$r=$v.Fetch();if($r){$r.StringData(1)}}
+          if((P "ProductVersion") -ne "1.5.3"){throw "ProductVersion mismatch"}
+          if((P "UpgradeCode") -ne "{0D434F72-3B19-4960-94EA-2B71F6F1FA3F}"){throw "UpgradeCode mismatch"}
+          $v=$db.OpenView("SELECT FileName FROM File");$v.Execute();$bad=@()
+          while($r=$v.Fetch()){$n=$r.StringData(1);if($n -match "RevitAPI(UI)?\.dll"){$bad+=$n}}
+          if($bad.Count){throw "Autodesk API DLLs in MSI"}
+          & $env:WIX_EXE msi validate -sice ICE91 $env:MSI_PATH
+          if($LASTEXITCODE -ne 0){throw "WiX MSI validation failed"}
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RevitAgents-LocalViewer-1.5.3-Windows-Build
+          path: ${{ env.RELEASE_DIR }}
+          retention-days: 1
+          if-no-files-found: error
