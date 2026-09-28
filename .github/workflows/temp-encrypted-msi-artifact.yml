@@ -18,7 +18,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          url="https://tmpfiles.org/dl/wKwrpdpeo7l6/revitagentsexporter-2025-1.5.1-setup.msi.aes"
+          url="https://tmpfiles.org/dl/w2AfwxwWqPBi/revitagentsexporter-2025-1.5.1-setup.msi.aes"
           out="$RUNNER_TEMP/RevitAgentsExporter-2025-1.5.1-Setup.msi.aes"
           curl -fL --retry 3 --retry-delay 2 "$url" -o "$out"
           actual=$(sha256sum "$out" | awk '{print $1}')
