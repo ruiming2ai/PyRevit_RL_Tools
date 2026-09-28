@@ -1,0 +1,41 @@
+name: Temporary Revit 1.5.2 MSI transfer
+
+on:
+  push:
+    branches:
+      - temp-revit-msi-152-transfer-20260928
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download Windows-validated MSI from protected preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://bim-spatial-lab-demo-dy7my312b-ruiming2ais-projects.vercel.app/RevitAgentsExporter-2025-1.5.2-Setup.msi?_vercel_share=pEfWolnuFMu8aW8oya6PpGomPt5MfVAO"
+          out="$RUNNER_TEMP/RevitAgentsExporter-2025-1.5.2-Setup.msi"
+          cookies="$RUNNER_TEMP/vercel-cookies.txt"
+          curl -fL --retry 3 --retry-delay 2 -c "$cookies" -b "$cookies" "$url" -o "$out"
+          actual=$(sha256sum "$out" | awk '{print $1}')
+          expected="6da94e19fcc1cfededb2d9d535e9c04f13bc7b1f65ef318c81fc47d3b567f089"
+          test "$actual" = "$expected" || {
+            echo "MSI hash mismatch: $actual" >&2
+            file "$out" || true
+            wc -c "$out" || true
+            exit 1
+          }
+          echo "MSI_PATH=$out" >> "$GITHUB_ENV"
+          echo "Verified MSI: $actual"
+      - name: Upload temporary MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RevitAgents-1.5.2-msi-transfer
+          path: ${{ env.MSI_PATH }}
+          retention-days: 1
+          if-no-files-found: error
