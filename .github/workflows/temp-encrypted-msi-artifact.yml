@@ -1,0 +1,38 @@
+name: Temporary encrypted MSI artifact
+
+on:
+  push:
+    branches:
+      - temp-encrypted-msi-pointer-20260928
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download encrypted MSI
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://tmpfiles.org/dl/wKwrpdpeo7l6/revitagentsexporter-2025-1.5.1-setup.msi.aes"
+          out="$RUNNER_TEMP/RevitAgentsExporter-2025-1.5.1-Setup.msi.aes"
+          curl -fL --retry 3 --retry-delay 2 "$url" -o "$out"
+          actual=$(sha256sum "$out" | awk '{print $1}')
+          expected="b95dfafc0bc43c027deb920d89027b3f41c5cfbeeebe05bac01ea9d110ac8470"
+          test "$actual" = "$expected" || {
+            echo "Encrypted MSI hash mismatch: $actual" >&2
+            exit 1
+          }
+          echo "ENC_PATH=$out" >> "$GITHUB_ENV"
+          echo "Verified encrypted payload: $actual"
+      - name: Upload encrypted artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RevitAgents-1.5.1-encrypted-transfer
+          path: ${{ env.ENC_PATH }}
+          retention-days: 1
+          if-no-files-found: error
