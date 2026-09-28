@@ -1,0 +1,5 @@
+# Temporary encrypted transfer
+
+This temporary link points only to an AES-256 encrypted build artifact and expires automatically.
+
+[Download encrypted MSI transfer](https://release-assets.githubusercontent.com/github-production-release-asset/1373953951/57cd31ec-419a-4dac-979f-2c25f75a9ecf?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-09-28T09%3A05%3A39Z&rscd=attachment%3B+filename%3DRevitAgentsExporter-2025-1.5.1-Setup.msi.aes&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-09-28T08%3A05%3A01Z&ske=2026-09-28T09%3A05%3A39Z&sks=b&skv=2018-11-09&sig=KNWweLNO0jpJBhd%2BUJqQ%2FiL9X%2Frb5psa%2BCyKNKCK%2FcA%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc5MDU4NDc3NSwibmJmIjoxNzkwNTgyOTc1LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.7J-ogSACcHtjn2h8WwtK2K7ZSXG5FfKmRXuqL4zaX2E&response-content-disposition=attachment%3B%20filename%3DRevitAgentsExporter-2025-1.5.1-Setup.msi.aes&response-content-type=application%2Foctet-stream)
