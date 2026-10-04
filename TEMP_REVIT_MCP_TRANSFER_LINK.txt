@@ -1,1 +1,1 @@
-https://revit-mcp-transfer-auiuww44o-ruiming2ais-projects.vercel.app/api/msi
+https://github.com/ruiming2ai/PyRevit_RL_Tools/releases/download/temp-revitmcp-cipher-37228979886/RevitMCP-0.2.0-2025-2026-Setup.msi.aes
