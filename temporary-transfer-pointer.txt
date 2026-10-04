@@ -1,0 +1,1 @@
+ENCRYPTED_URL=https://temp.sh/WLmOJ/RevitMCP-0.2.0-2025-2026-Setup.msi.aes
