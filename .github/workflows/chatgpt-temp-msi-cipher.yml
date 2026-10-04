@@ -13,13 +13,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          CIPHER_URL: "https://tmpfiles.org/dl/wGA7fojiBfpg/revitmcp-0.2.0-2025-2026-setup.msi.aes"
+          CIPHER_URL: "https://paste.c-net.org/550324af-4b89-7401-022d-191ab0183b12"
         run: |
           set -euo pipefail
           cipher="$RUNNER_TEMP/RevitMCP-0.2.0-2025-2026-Setup.msi.aes"
           curl -fL --silent --show-error "$CIPHER_URL" -o "$cipher"
           test -s "$cipher"
           size=$(stat -c %s "$cipher")
+          if [ "$size" -lt 30000000 ]; then echo "Ciphertext download too small: $size" >&2; exit 1; fi
           sha=$(sha256sum "$cipher" | awk '{print $1}')
           tag="temp-revitmcp-cipher-$GITHUB_RUN_ID"
           gh release create "$tag" "$cipher" \
