@@ -1,0 +1,33 @@
+name: Temporary encrypted MSI public bridge
+on:
+  push:
+    branches: [chatgpt-temp-msi-cipher-20261004]
+permissions:
+  contents: write
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Stage encrypted ciphertext as temporary release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CIPHER_URL: "https://tmpfiles.org/dl/wGA7fojiBfpg/revitmcp-0.2.0-2025-2026-setup.msi.aes"
+        run: |
+          set -euo pipefail
+          cipher="$RUNNER_TEMP/RevitMCP-0.2.0-2025-2026-Setup.msi.aes"
+          curl -fL --silent --show-error "$CIPHER_URL" -o "$cipher"
+          test -s "$cipher"
+          size=$(stat -c %s "$cipher")
+          sha=$(sha256sum "$cipher" | awk '{print $1}')
+          tag="temp-revitmcp-cipher-$GITHUB_RUN_ID"
+          gh release create "$tag" "$cipher" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Temporary encrypted RevitMCP transfer" \
+            --prerelease \
+            --notes "Encrypted ciphertext only. No decryption key is stored in this repository. Temporary transfer asset."
+          echo "TEMP_RELEASE_TAG=$tag"
+          echo "CIPHER_SIZE=$size"
+          echo "CIPHER_SHA256=$sha"
